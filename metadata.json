@@ -1,0 +1,6 @@
+{
+  "name": "Micro-Tool Intelligence Dashboard",
+  "description": "Private command center for discovering profitable micro-tool ideas, validating domain availability, and tracking competitor performance autonomously using Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

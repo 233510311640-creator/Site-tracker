@@ -179,6 +179,34 @@ export default function App() {
     }
   };
 
+  // Add Custom or Scouted Idea
+  const handleSaveIdea = async (ideaData: any) => {
+    try {
+      const res = await fetch('/api/ideas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ideaData)
+      }).then(r => r.json());
+
+      if (res.success) {
+        setIdeas(prev => {
+          // Prevent duplicates in UI
+          if (prev.some(idea => idea.name.toLowerCase() === res.data.name.toLowerCase())) {
+            return prev;
+          }
+          return [res.data, ...prev];
+        });
+        return res.data;
+      } else {
+        setErrorBanner(res.error || "Failed to save idea.");
+        return null;
+      }
+    } catch (err: any) {
+      setErrorBanner(err.message || "Failed to call save idea API.");
+      return null;
+    }
+  };
+
   // Domain Checker: Check single domain
   const handleCheckDomain = async (domain: string, ideaId: number) => {
     setIsCheckingDomain(true);
@@ -478,6 +506,7 @@ export default function App() {
                   onSelectIdeaForEvidence={setSelectedEvidenceIdea}
                   onSelectIdeaForDomains={handleSelectIdeaForDomains}
                   onSelectIdeaForCompetitors={handleSelectIdeaForCompetitors}
+                  onSaveIdea={handleSaveIdea}
                   isMining={isMining}
                   isDiscovering={isDiscovering}
                 />

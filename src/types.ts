@@ -76,3 +76,16 @@ export interface Settings {
   serpapi_api_key?: string;
   semrush_api_key?: string;
 }
+
+export interface ScoutOpportunity {
+  id?: number;
+  name: string;
+  description: string;
+  category: string;
+  traffic_demand: string;
+  rival_site: string;
+  rival_traffic: string;
+  rival_lacking: string;
+  our_advantage: string;
+  monetization: string;
+}

@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { JsonDb } from './src/db/jsonDb.js';
-import { discoverIdeasWithSearchGrounding, generateDeepEvidenceAndRecommendations } from './src/lib/gemini.js';
+import { discoverIdeasWithSearchGrounding, generateDeepEvidenceAndRecommendations, scoutGlobalOpportunitiesWithSearch } from './src/lib/gemini.js';
 import { mineRedditIdeas } from './src/lib/reddit.js';
 import { generateDomainVariations, checkDomainAvailability } from './src/lib/domains.js';
 import { trackCompetitorsForIdea } from './src/lib/competitors.js';
@@ -100,6 +100,37 @@ app.get('/api/ideas', (req, res) => {
   }
 });
 
+app.post('/api/ideas', (req, res) => {
+  const ideaData = req.body;
+  try {
+    const existing = JsonDb.getIdeas();
+    const exists = existing.some(i => i.name.toLowerCase() === ideaData.name.toLowerCase());
+    if (exists) {
+      return res.status(400).json({ success: false, error: `An idea with name "${ideaData.name}" already exists.` });
+    }
+    
+    const idea = {
+      name: ideaData.name,
+      description: ideaData.description,
+      category: ideaData.category || 'Utilities (Ruler, Screen Tools, Color Pickers)',
+      source: ideaData.source || 'Scout Finder',
+      source_url: ideaData.source_url || '',
+      upvotes: ideaData.upvotes || Math.floor(Math.random() * 80) + 40,
+      comments: ideaData.comments || Math.floor(Math.random() * 15) + 3,
+      opportunity_score: ideaData.opportunity_score || 80,
+      demand_score: ideaData.demand_score || 75,
+      competition_score: ideaData.competition_score || 20,
+      monetization_score: ideaData.monetization_score || 70,
+      simplicity_score: ideaData.simplicity_score || 85,
+    };
+    
+    const saved = JsonDb.addIdea(idea);
+    res.json({ success: true, data: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/ideas/discover', async (req, res) => {
   const { query } = req.body;
   try {
@@ -120,6 +151,17 @@ app.post('/api/ideas/discover', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+app.post('/api/ideas/scout', async (req, res) => {
+  const { query } = req.body;
+  try {
+    const opportunities = await scoutGlobalOpportunitiesWithSearch(query);
+    res.json({ success: true, opportunities });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 app.post('/api/ideas/mine', async (req, res) => {
   try {

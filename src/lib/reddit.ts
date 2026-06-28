@@ -222,15 +222,15 @@ export async function mineRedditIdeas(): Promise<Omit<Idea, 'id' | 'created_at' 
 
   // Otherwise, activate our clean, robust smart fallback pipelines
   try {
-    console.log("[Reddit Sync System] Fallback activated. Attempting Gemini Search Grounding for fresh, live SaaS trends...");
+    console.log("[Reddit Sync System] Fallback activated. Attempting SerpAPI-backed Gemini discovery for fresh, live SaaS trends...");
     const geminiIdeas = await discoverIdeasWithSearchGrounding("profitable micro-tool ideas, online calculators, or web utilities launched on reddit r/SideProject or r/SaaS recently");
     if (geminiIdeas && geminiIdeas.length > 0) {
-      console.log(`[Reddit Sync System] Successfully mined ${geminiIdeas.length} fresh ideas via Gemini Search Grounding.`);
+      console.log(`[Reddit Sync System] Successfully mined ${geminiIdeas.length} fresh ideas via SerpAPI-backed Gemini discovery.`);
       return geminiIdeas;
     }
   } catch (err) {
-    // Silently capture if Gemini isn't configured or failed, and proceed to cached trends
-    console.log("[Reddit Sync System] Gemini client not ready or key unconfigured. Utilizing offline trend cache...");
+    // Silently capture if Gemini/search isn't configured or failed, and proceed to cached trends
+    console.log("[Reddit Sync System] Search/AI fallback not ready or key unconfigured. Utilizing offline trend cache...");
   }
 
   // Absolute fallback guarantees beautiful, robust loading of high-quality active trend ideas

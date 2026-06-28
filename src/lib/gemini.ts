@@ -2,6 +2,90 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { JsonDb } from "../db/jsonDb.js";
 import { Idea, Evidence, ScoutOpportunity } from "../types.js";
 
+interface SerpApiResult {
+  title: string;
+  link: string;
+  snippet: string;
+  displayed_link?: string;
+  position?: number;
+}
+
+function getSerpApiKey(): string | null {
+  const settings = JsonDb.getSettings();
+  const apiKey = process.env.SERPAPI_API_KEY || settings.serpapi_api_key;
+  if (!apiKey || apiKey === "MY_SERPAPI_API_KEY") {
+    return null;
+  }
+  return apiKey;
+}
+
+async function searchWithSerpApi(query: string, num = 8): Promise<SerpApiResult[]> {
+  const apiKey = getSerpApiKey();
+  if (!apiKey) {
+    console.log("[SerpAPI] API key not configured. Skipping live search context.");
+    return [];
+  }
+
+  try {
+    const params = new URLSearchParams({
+      engine: "google",
+      q: query,
+      api_key: apiKey,
+      num: String(num),
+      hl: "en",
+      gl: "us"
+    });
+
+    const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.log(`[SerpAPI] Search failed with status ${response.status}: ${body.slice(0, 300)}`);
+      return [];
+    }
+
+    const data: any = await response.json();
+    const organicResults = Array.isArray(data?.organic_results) ? data.organic_results : [];
+    const relatedQuestions = Array.isArray(data?.related_questions) ? data.related_questions : [];
+
+    const normalizedOrganic: SerpApiResult[] = organicResults.slice(0, num).map((result: any, index: number) => ({
+      title: String(result.title || "Untitled result"),
+      link: String(result.link || result.redirect_link || ""),
+      snippet: String(result.snippet || ""),
+      displayed_link: result.displayed_link ? String(result.displayed_link) : undefined,
+      position: Number(result.position || index + 1)
+    })).filter((result: SerpApiResult) => result.link || result.snippet);
+
+    const normalizedQuestions: SerpApiResult[] = relatedQuestions.slice(0, 3).map((question: any, index: number) => ({
+      title: String(question.question || "Related question"),
+      link: String(question.link || ""),
+      snippet: String(question.snippet || question.title || ""),
+      displayed_link: question.displayed_link ? String(question.displayed_link) : undefined,
+      position: normalizedOrganic.length + index + 1
+    })).filter((result: SerpApiResult) => result.title || result.snippet);
+
+    const combined = [...normalizedOrganic, ...normalizedQuestions].slice(0, num + 3);
+    console.log(`[SerpAPI] Retrieved ${combined.length} live search results for query: ${query}`);
+    return combined;
+  } catch (err: any) {
+    console.log(`[SerpAPI] Search request failed: ${err?.message || err}`);
+    return [];
+  }
+}
+
+function formatSearchContext(results: SerpApiResult[]): string {
+  if (!results.length) {
+    return "No live SerpAPI search results were available. Use general Gemini knowledge only and clearly avoid inventing specific traffic/upvote proof.";
+  }
+
+  return results.map((result, index) => [
+    `Result ${index + 1}:`,
+    `Title: ${result.title}`,
+    `URL: ${result.link || result.displayed_link || "unknown"}`,
+    `Snippet: ${result.snippet || "No snippet provided"}`
+  ].join("\n")).join("\n\n");
+}
+
+
 function getGeminiClient(): GoogleGenAI | null {
   const settings = JsonDb.getSettings();
   const apiKey = process.env.GEMINI_API_KEY || settings.gemini_api_key;
@@ -202,15 +286,23 @@ function generateFallbackIdeasForQuery(query: string): Omit<Idea, 'id' | 'create
 }
 
 /**
- * Uses gemini-2.5-flash with Search Grounding to discover profitable micro-tool ideas
+ * Uses SerpAPI for live search context, then Gemini 2.5 Flash for analysis.
+ * This avoids Gemini Google Search Grounding, which requires billing-enabled access for some projects.
  */
 export async function discoverIdeasWithSearchGrounding(queryPhrase?: string): Promise<Omit<Idea, 'id' | 'created_at' | 'is_watchlisted'>[]> {
   const query = queryPhrase || "popular micro-tool requests r/SideProject indie SaaS utilities 2026";
   const ai = getGeminiClient();
+  const searchResults = await searchWithSerpApi(`${query} micro tool SaaS calculator generator formatter competitor demand`, 10);
+  const searchContext = formatSearchContext(searchResults);
 
   if (ai) {
     try {
-      const prompt = `Search the web and discover 5 trending, highly requested, or newly launched micro-tool ideas, micro-SaaS, or online calculators from platforms like Reddit (r/SideProject, r/SaaS, r/webdev), Product Hunt, or IndieHackers.
+      const prompt = `You are analyzing live Google search results provided by SerpAPI. Discover 5 trending, highly requested, or newly launched micro-tool ideas, micro-SaaS, or online calculators from platforms like Reddit (r/SideProject, r/SaaS, r/webdev), Product Hunt, IndieHackers, competitor pages, or search snippets.
+      
+      User query/focus: "${query}"
+
+      Live search context:
+      ${searchContext}
       
       Focus on identifying:
       1. The name of the micro-tool
@@ -247,7 +339,6 @@ export async function discoverIdeasWithSearchGrounding(queryPhrase?: string): Pr
         model: "gemini-2.5-flash",
         contents: prompt,
         config: {
-          tools: [{ googleSearch: {} }],
           responseMimeType: "application/json"
         }
       });
@@ -381,14 +472,20 @@ export async function generateDeepEvidenceAndRecommendations(idea: Idea): Promis
 }
 
 /**
- * Uses gemini-2.5-flash with search grounding to discover real live competitor sites for a given tool name
+ * Uses SerpAPI for live search context, then Gemini 2.5 Flash for competitor analysis.
  */
 export async function discoverCompetitorsWithSearch(ideaId: number, ideaName: string): Promise<{ domain: string; monthly_visits: number; global_rank: number; top_country: string; bounce_rate: number; traffic_trend: 'up' | 'down' | 'steady'; threat_level: 'High' | 'Medium' | 'Low'; tech_stack: string[]; top_keywords: string[]; estimated_revenue: number }[]> {
   const ai = getGeminiClient();
+  const searchResults = await searchWithSerpApi(`${ideaName} online tool alternatives competitors`, 8);
+  const searchContext = formatSearchContext(searchResults);
 
   if (ai) {
     try {
-      const prompt = `Search Google for competitors of this online micro-tool: "${ideaName}".
+      const prompt = `You are analyzing live Google search results provided by SerpAPI for this online micro-tool: "${ideaName}".
+      
+      Live search context:
+      ${searchContext}
+
       Find 2 or 3 actual live websites or tools offering this service.
       For each competitor, find or realistically estimate their:
       - domain (e.g., 'example.com')
@@ -424,7 +521,6 @@ export async function discoverCompetitorsWithSearch(ideaId: number, ideaName: st
         model: "gemini-2.5-flash",
         contents: prompt,
         config: {
-          tools: [{ googleSearch: {} }],
           responseMimeType: "application/json"
         }
       });
@@ -470,7 +566,7 @@ export async function discoverCompetitorsWithSearch(ideaId: number, ideaName: st
 }
 
 /**
- * Searches Google using Gemini 3.5-flash with Search Grounding to scout global high-traffic web tool opportunities,
+ * Searches Google using SerpAPI, then asks Gemini 2.5 Flash to scout global high-traffic web tool opportunities,
  * compare them with direct rivals, identify their drawbacks/gaps, and outline how to outperform them.
  */
 export async function scoutGlobalOpportunitiesWithSearch(userQuery?: string): Promise<ScoutOpportunity[]> {
@@ -522,9 +618,18 @@ export async function scoutGlobalOpportunitiesWithSearch(userQuery?: string): Pr
   ];
 
   const ai = getGeminiClient();
+  const focus = userQuery || "general high-traffic web tools or SaaS";
+  const searchResults = await searchWithSerpApi(`${focus} online calculator generator tool competitor traffic alternatives`, 10);
+  const searchContext = formatSearchContext(searchResults);
   if (ai) {
     try {
-      const prompt = `Search the web to find 4 trending, highly sought after web applications, digital products, calculators, or SaaS ideas that could be built in any field.
+      const prompt = `You are analyzing live Google search results provided by SerpAPI to find 4 trending, highly sought after web applications, digital products, calculators, or SaaS ideas that could be built in any field.
+      
+      User query/focus: "${focus}"
+
+      Live search context:
+      ${searchContext}
+
       The ideas can be anything, but MUST meet these criteria:
       1. Has a decent amount of global search traffic or user demand.
       2. Identify a specific, highly ranked rival/competitor site and estimate their traffic.
@@ -554,7 +659,6 @@ export async function scoutGlobalOpportunitiesWithSearch(userQuery?: string): Pr
         model: "gemini-2.5-flash",
         contents: prompt,
         config: {
-          tools: [{ googleSearch: {} }],
           responseMimeType: "application/json"
         }
       });
